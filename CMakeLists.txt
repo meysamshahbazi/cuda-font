@@ -32,7 +32,7 @@ file(GLOB CLASS_SRC "*.cpp" "*.cu")
 
 SET(APP_SOURCES
         main.cpp
-                ${CLASS_SRC}
+        ${CLASS_SRC}
         )
 
 
@@ -42,7 +42,7 @@ SET(GCC_COVERAGE_COMPILE_FLAGS "-std=c++14 -Wunused-function")
 SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${GCC_COVERAGE_COMPILE_FLAGS}" )
 
 # TARGETS --------------------------------------------------------------------------------------------------------------
-cuda_add_executable(${PROJECT_NAME} main.cpp yadif.cpp yadif_cuda.cu ${APP_SOURCES} ${PLATFORM_SOURCES} )
+cuda_add_executable(${PROJECT_NAME} main.cpp ${APP_SOURCES} ${PLATFORM_SOURCES} )
 # set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES "86")
 target_include_directories(${PROJECT_NAME} PUBLIC   ${CUDA_INCLUDE_DIRS} 
                                                     ${OpenCV_INCLUDE_DIRS}  )
