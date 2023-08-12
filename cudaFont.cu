@@ -53,7 +53,7 @@ struct __align__(16) GlyphCommand
 // adaptFontSize
 float adaptFontSize( uint32_t dimension )
 {
-	const float max_font = 32.0f;
+	const float max_font = 200.0f;
 	const float min_font = 28.0f;
 
 	const uint32_t max_dim = 1536;
@@ -87,8 +87,8 @@ cudaFont::cudaFont()
 	mRectsGPU   = NULL;
 	mRectIndex  = 0;
 
-	mFontMapWidth  = 256;
-	mFontMapHeight = 256;
+	mFontMapWidth  = 512;
+	mFontMapHeight = 512;
 }
 
 
@@ -179,13 +179,225 @@ cudaFont* cudaFont::Create( const char* font, float size )
 	if( !c )
 		return NULL;
 		
-	if( !c->init(font, size) )
+	if( !c->init_border(font, size) )
 	{
 		delete c;
 		return NULL;
 	}
 
 	return c;
+}
+
+
+// init
+bool cudaFont::init_border( const char* filename, float size )
+{
+	// validate parameters
+	if( !filename )
+		return NULL;
+
+	// verify that the font file exists and get its size
+	const size_t ttf_size = fileSize(filename);
+	
+	if( !ttf_size ) {
+		LogError(LOG_CUDA "font doesn't exist or empty file '%s'\n", filename);
+ 		return false;
+	}
+
+	// allocate memory to store the font file
+	void* ttf_buffer_in = malloc(ttf_size);
+
+	if( !ttf_buffer_in ) {
+		LogError(LOG_CUDA "failed to allocate %zu byte buffer for reading '%s'\n", ttf_size, filename);
+		return false;
+	}
+
+	// open the font file
+	FILE* ttf_file = fopen(filename, "rb");
+
+	if( !ttf_file )
+	{
+		LogError(LOG_CUDA "failed to open '%s' for reading\n", filename);
+		free(ttf_buffer_in);
+		return false;
+	}
+
+	// read the font file
+	const size_t ttf_read = fread(ttf_buffer_in, 1, ttf_size, ttf_file);
+
+	fclose(ttf_file);
+
+	if( ttf_read != ttf_size ) {
+		LogError(LOG_CUDA "failed to read contents of '%s'\n", filename);
+		LogError(LOG_CUDA "(read %zu bytes, expected %zu bytes)\n", ttf_read, ttf_size);
+
+		free(ttf_buffer_in);
+		return false;
+	}
+
+
+
+
+
+	
+	const size_t ttf_size_Bold = fileSize("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf");
+	
+	if( !ttf_size_Bold) {
+		LogError(LOG_CUDA "font doesn't exist or empty file '%s'\n", filename);
+ 		return false;
+	}
+
+	// allocate memory to store the font file
+	void* ttf_buffer_Bold = malloc(ttf_size_Bold);
+
+	if( !ttf_buffer_Bold ) {
+		LogError(LOG_CUDA "failed to allocate %zu byte buffer for reading '%s'\n", ttf_size, filename);
+		return false;
+	}
+
+	// open the font file
+	FILE* ttf_file_Bold = fopen("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", "rb");
+
+	if( !ttf_file_Bold )
+	{
+		LogError(LOG_CUDA "failed to open '%s' for reading\n", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf");
+		free(ttf_buffer_Bold);
+		return false;
+	}
+
+	// read the font file
+	const size_t ttf_read_Bold= fread(ttf_buffer_Bold, 1, ttf_size, ttf_file_Bold);
+
+	fclose(ttf_file);
+
+	if( ttf_read_Bold != ttf_size_Bold ) {
+		LogError(LOG_CUDA "failed to read contents of '%s'\n", filename);
+		LogError(LOG_CUDA "(read %zu bytes, expected %zu bytes)\n", ttf_read, ttf_size);
+
+		free(ttf_buffer_Bold);
+		return false;
+	}
+
+
+	
+	// buffer that stores the coordinates of the baked glyphs
+	stbtt_bakedchar bakeCoords[NumGlyphs];
+	stbtt_bakedchar bakeCoords_in[NumGlyphs];
+	// increase the size of the bitmap until all the glyphs fit
+	while(true) {
+		// allocate memory for the packed font texture (alpha only)
+		const size_t fontMapSize = mFontMapWidth * mFontMapHeight * sizeof(unsigned char);
+		
+		// printf("fontMapSize: %d\n",fontMapSize);
+
+		if( !cudaAllocMapped((void**)&mFontMapCPU, (void**)&mFontMapGPU, fontMapSize) ) {
+			LogError(LOG_CUDA "failed to allocate %zu bytes to store %ix%i font map\n", fontMapSize, mFontMapWidth, mFontMapHeight);
+			free(ttf_buffer_Bold);
+			return false;
+		}
+
+		if( !cudaAllocMapped((void**)&mFontMapCPU_in, (void**)&mFontMapGPU_in, fontMapSize) ) {
+			LogError(LOG_CUDA "failed to allocate %zu bytes to store %ix%i font map\n", fontMapSize, mFontMapWidth, mFontMapHeight);
+			free(ttf_buffer_in);
+			return false;
+		}
+
+
+		// attempt to pack the bitmap
+		const int result = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer_Bold, 0, size, 
+										mFontMapCPU, mFontMapWidth, mFontMapHeight,
+									    FirstGlyph, NumGlyphs, bakeCoords);
+
+		const int result_in = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer_in, 0, size, 
+										mFontMapCPU_in, mFontMapWidth, mFontMapHeight,
+									    FirstGlyph, NumGlyphs, bakeCoords_in);
+
+		if( result == 0 ) {
+			LogError(LOG_CUDA "failed to bake font bitmap '%s'\n", filename);
+			free(ttf_buffer_in);
+			return false;
+		}
+		else if( result < 0 ) {
+			const int glyphsPacked = -result;
+
+			if( glyphsPacked == NumGlyphs ) {
+				LogVerbose(LOG_CUDA "packed %u glyphs in %ux%u bitmap (font size=%.0fpx)\n", NumGlyphs, mFontMapWidth, mFontMapHeight, size);
+				break;
+			}
+
+		#ifdef DEBUG_FONT
+			LogDebug(LOG_CUDA "fit only %i of %u font glyphs in %ux%u bitmap\n", glyphsPacked, NumGlyphs, mFontMapWidth, mFontMapHeight);
+		#endif
+
+			CUDA(cudaFreeHost(mFontMapCPU));
+		
+			mFontMapCPU = NULL; 
+			mFontMapGPU = NULL;
+
+			mFontMapWidth *= 2;
+			mFontMapHeight *= 2;
+			// printf("mFontMapWidth: %d\n",mFontMapWidth);
+			// printf("mFontMapHeight: %d\n",mFontMapHeight);
+		#ifdef DEBUG_FONT
+			LogDebug(LOG_CUDA "attempting to pack font with %ux%u bitmap...\n", mFontMapWidth, mFontMapHeight);
+		#endif
+			continue;
+		}
+		else { // when every thing is ok!
+		#ifdef DEBUG_FONT
+			LogDebug(LOG_CUDA "packed %u glyphs in %ux%u bitmap (font size=%.0fpx)\n", NumGlyphs, mFontMapWidth, mFontMapHeight, size);
+		#endif		
+			break;
+		}
+	}
+
+	
+	// free the TTF font data
+	free(ttf_buffer_in);
+
+	// store texture baking coordinates
+	for( uint32_t n=0; n < NumGlyphs; n++ )
+	{
+		mGlyphInfo[n].x = bakeCoords[n].x0;
+		mGlyphInfo[n].y = bakeCoords[n].y0;
+
+		mGlyphInfo[n].width  = bakeCoords[n].x1 - bakeCoords[n].x0;
+		mGlyphInfo[n].height = bakeCoords[n].y1 - bakeCoords[n].y0;
+
+		mGlyphInfo[n].xAdvance = bakeCoords[n].xadvance;
+		mGlyphInfo[n].xOffset  = bakeCoords[n].xoff;
+		mGlyphInfo[n].yOffset  = bakeCoords[n].yoff;
+
+		mGlyphInfo_in[n].x = bakeCoords_in[n].x0;
+		mGlyphInfo_in[n].y = bakeCoords_in[n].y0;
+
+		mGlyphInfo_in[n].width  = bakeCoords_in[n].x1 - bakeCoords_in[n].x0;
+		mGlyphInfo_in[n].height = bakeCoords_in[n].y1 - bakeCoords_in[n].y0;
+
+		mGlyphInfo_in[n].xAdvance = bakeCoords_in[n].xadvance; //
+		mGlyphInfo_in[n].xOffset  = bakeCoords_in[n].xoff;
+		mGlyphInfo_in[n].yOffset  = bakeCoords_in[n].yoff;
+
+	#ifdef DEBUG_FONT
+		// debug info
+		const char c = n + FirstGlyph;
+		LogDebug("Glyph %u: '%c' width=%hu height=%hu xOffset=%.0f yOffset=%.0f xAdvance=%0.1f\n", n, c, mGlyphInfo[n].width, mGlyphInfo[n].height, mGlyphInfo[n].xOffset, mGlyphInfo[n].yOffset, mGlyphInfo[n].xAdvance);
+	#endif	
+	}
+
+	// allocate memory for GPU command buffer	
+	if( !cudaAllocMapped(&mCommandCPU, &mCommandGPU, sizeof(GlyphCommand) * MaxCommands) )
+		return false;
+
+	if( !cudaAllocMapped(&mCommandCPU_in, &mCommandGPU_in, sizeof(GlyphCommand) * MaxCommands) )
+		return false;
+	
+	// allocate memory for background rect buffers
+	if( !cudaAllocMapped((void**)&mRectsCPU, (void**)&mRectsGPU, sizeof(float4) * MaxCommands) )
+		return false;
+
+	mSize = size;
+	return true;
 }
 
 
@@ -199,8 +411,7 @@ bool cudaFont::init( const char* filename, float size )
 	// verify that the font file exists and get its size
 	const size_t ttf_size = fileSize(filename);
 	
-	if( !ttf_size )
-	{
+	if( !ttf_size ) {
 		LogError(LOG_CUDA "font doesn't exist or empty file '%s'\n", filename);
  		return false;
 	}
@@ -208,8 +419,7 @@ bool cudaFont::init( const char* filename, float size )
 	// allocate memory to store the font file
 	void* ttf_buffer = malloc(ttf_size);
 
-	if( !ttf_buffer )
-	{
+	if( !ttf_buffer ) {
 		LogError(LOG_CUDA "failed to allocate %zu byte buffer for reading '%s'\n", ttf_size, filename);
 		return false;
 	}
@@ -229,8 +439,7 @@ bool cudaFont::init( const char* filename, float size )
 
 	fclose(ttf_file);
 
-	if( ttf_read != ttf_size )
-	{
+	if( ttf_read != ttf_size ) {
 		LogError(LOG_CUDA "failed to read contents of '%s'\n", filename);
 		LogError(LOG_CUDA "(read %zu bytes, expected %zu bytes)\n", ttf_read, ttf_size);
 
@@ -247,6 +456,8 @@ bool cudaFont::init( const char* filename, float size )
 		// allocate memory for the packed font texture (alpha only)
 		const size_t fontMapSize = mFontMapWidth * mFontMapHeight * sizeof(unsigned char);
 		
+		// printf("fontMapSize: %d\n",fontMapSize);
+
 		if( !cudaAllocMapped((void**)&mFontMapCPU, (void**)&mFontMapGPU, fontMapSize) )
 		{
 			LogError(LOG_CUDA "failed to allocate %zu bytes to store %ix%i font map\n", fontMapSize, mFontMapWidth, mFontMapHeight);
@@ -257,16 +468,14 @@ bool cudaFont::init( const char* filename, float size )
 		// attempt to pack the bitmap
 		const int result = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer, 0, size, 
 										mFontMapCPU, mFontMapWidth, mFontMapHeight,
-									     FirstGlyph, NumGlyphs, bakeCoords);
+									    FirstGlyph, NumGlyphs, bakeCoords);
 
-		if( result == 0 )
-		{
+		if( result == 0 ) {
 			LogError(LOG_CUDA "failed to bake font bitmap '%s'\n", filename);
 			free(ttf_buffer);
 			return false;
 		}
-		else if( result < 0 )
-		{
+		else if( result < 0 ) {
 			const int glyphsPacked = -result;
 
 			if( glyphsPacked == NumGlyphs )
@@ -286,19 +495,19 @@ bool cudaFont::init( const char* filename, float size )
 
 			mFontMapWidth *= 2;
 			mFontMapHeight *= 2;
-			printf("mFontMapWidth: %d\n",mFontMapWidth);
-			printf("mFontMapHeight: %d\n",mFontMapHeight);
+			
 		#ifdef DEBUG_FONT
 			LogDebug(LOG_CUDA "attempting to pack font with %ux%u bitmap...\n", mFontMapWidth, mFontMapHeight);
 		#endif
 			continue;
 		}
-		else
-		{
-		#ifdef DEBUG_FONT
+		else {
+		// #define DEBUG_FONT 1 
+		// #ifdef DEBUG_FONT
 			LogDebug(LOG_CUDA "packed %u glyphs in %ux%u bitmap (font size=%.0fpx)\n", NumGlyphs, mFontMapWidth, mFontMapHeight, size);
-		#endif		
+		// #endif		
 			break;
+			
 		}
 	}
 
@@ -338,14 +547,9 @@ bool cudaFont::init( const char* filename, float size )
 	return true;
 }
 
-
-/*inline __host__ __device__ float4 operator*(float4 a, float4 b)
-{
-    return make_float4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w);
-}*/
-// 
 inline __host__ __device__ float4 alpha_blend( const float4& bg, const float4& fg )
 {
+	// TODO: do it with uchar stuff!
 	// px_in, px_font
 	const float alpha = fg.w / 255.0f;
 	const float ialph = 1.0f - alpha;
@@ -359,11 +563,11 @@ inline __host__ __device__ float4 alpha_blend( const float4& bg, const float4& f
 
 
 template<typename T>
-__global__ void gpuOverlayText( unsigned char* font, int fontWidth, GlyphCommand* commands,
+__global__ void gpuOverlayText( unsigned char* font, unsigned char* font_in,int fontWidth, GlyphCommand* commands ,GlyphCommand* commands_in,
 						  T* input, T* output, int imgWidth, int imgHeight, float4 color ) 
 {
 	const GlyphCommand cmd = commands[blockIdx.x];
-
+	const GlyphCommand cmd_in = commands_in[blockIdx.x];
 	if( threadIdx.x >= cmd.width || threadIdx.y >= cmd.height )
 		return;
 
@@ -373,68 +577,42 @@ __global__ void gpuOverlayText( unsigned char* font, int fontWidth, GlyphCommand
 	if( x < 0 || y < 0 || x >= imgWidth || y >= imgHeight )
 		return;
 
-	const int u = cmd.u + threadIdx.x;
-	const int v = cmd.v + threadIdx.y;
+	const int u = cmd.u + threadIdx.x ;
+	const int v = cmd.v + threadIdx.y ;
 
 	const float px_glyph = font[v * fontWidth + u];
 
-	const float4 px_font = make_float4(px_glyph * color.x, px_glyph * color.y, px_glyph * color.z, px_glyph * color.w);
+	float4 color_out = make_float4(1,1,1,1);
+
+	const float4 px_font = make_float4(px_glyph * color_out.x, px_glyph * color_out.y, px_glyph * color_out.z, px_glyph * color_out.w);
 	const float4 px_in   = cast_vec<float4>(input[y * imgWidth + x]);
 
 	
 	output[y * imgWidth + x] = cast_vec<T>(alpha_blend(px_in, px_font));	
+
+
+
+	const int xx = cmd_in.x + threadIdx.x;
+	const int yy = cmd_in.y + threadIdx.y;
+
+	const int u_in = cmd_in.u + threadIdx.x;
+	const int v_in = cmd_in.v + threadIdx.y;
+
+
+	const float px_glyph_in = font_in[v_in* fontWidth +u_in];
+	const float4 px_font_in = make_float4(px_glyph_in * color.x, px_glyph_in * color.y, px_glyph_in * color.z, px_glyph_in * color.w);
+	const float4 px_in_in   = cast_vec<float4>(input[yy * imgWidth + xx]);
+
+	if(px_glyph_in)
+		output[(yy) * imgWidth + (xx)] = cast_vec<T>(alpha_blend(px_in_in, px_font_in));
 	
 }
 
 
-template<typename T1, typename T2>
-__device__ inline T1 cudaAlphaBlend2( const T1& src, const T2& dst )
-{
-	const float alph = dst.w / 255.0f;
-	const float inva = 1.0f - alph;
-
-	return make_vec<T1>(alph * dst.x + inva * src.x,
-						alph * dst.y + inva * src.y,
-						alph * dst.z + inva * src.z,
-						alph * dst.w + inva * src.w);
-}
-
-template<typename T>
-__global__ void gpuOverlayTextABGR( unsigned char* font, int fontWidth, GlyphCommand* commands,
-						  T* input, T* output, int imgWidth, int imgHeight, float4 color ) 
-{
-	const GlyphCommand cmd = commands[blockIdx.x];
-
-	if( threadIdx.x >= cmd.width || threadIdx.y >= cmd.height )
-		return;
-
-	const int x = cmd.x + threadIdx.x;
-	const int y = cmd.y + threadIdx.y;
-
-	if( x < 0 || y < 0 || x >= imgWidth || y >= imgHeight )
-		return;
-
-	const int u = cmd.u + threadIdx.x;
-	const int v = cmd.v + threadIdx.y;
-
-	const float px_glyph = font[v * fontWidth + u];
-
-	const float4 px_font = make_float4(
-								px_glyph * color.x,
-								px_glyph * color.y,
-								px_glyph * color.z, 
-								px_glyph * color.w);
-
-	const float4 px_in   = cast_vec<float4>(input[y * imgWidth + x]);
- 
-	output[y * imgWidth + x] = cast_vec<T>(cudaAlphaBlend2(px_in, px_font));	
-
-	 
-}
 
 // cudaOverlayText
-cudaError_t cudaOverlayText( unsigned char* font, const int2& maxGlyphSize, size_t fontMapWidth,
-					    GlyphCommand* commands, size_t numCommands, const float4& fontColor, cudaStream_t stream,
+cudaError_t cudaOverlayText( unsigned char* font,unsigned char* font_in, const int2& maxGlyphSize, size_t fontMapWidth,
+					    GlyphCommand* commands, GlyphCommand* commands_in, size_t numCommands, const float4& fontColor, cudaStream_t stream,
 					    void* input, void* output, imageFormat format, size_t imgWidth, size_t imgHeight)	
 {
 	if( !font || !commands || !input || !output || numCommands == 0 || fontMapWidth == 0 || imgWidth == 0 || imgHeight == 0 )
@@ -446,18 +624,20 @@ cudaError_t cudaOverlayText( unsigned char* font, const int2& maxGlyphSize, size
 	// setup arguments
 	const dim3 block(maxGlyphSize.x, maxGlyphSize.y);
 	const dim3 grid(numCommands);
-	if (format == IMAGE_ABGR8)
-		gpuOverlayTextABGR<uchar4><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGB8 )
-		gpuOverlayText<uchar3><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (uchar3*)input, (uchar3*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGBA8 )
-		gpuOverlayText<uchar4><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGB32F )
-		gpuOverlayText<float3><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (float3*)input, (float3*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGBA32F )
-		gpuOverlayText<float4><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (float4*)input, (float4*)output, imgWidth, imgHeight, color_scaled); 
-	else
-		return cudaErrorInvalidValue;
+	// if (format == IMAGE_ABGR8)
+	// 	gpuOverlayTextABGR<uchar4><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, color_scaled); 
+	// else 
+	// if( format == IMAGE_RGB8 )
+	// 	gpuOverlayText<uchar3><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (uchar3*)input, (uchar3*)output, imgWidth, imgHeight, color_scaled); 
+	// else if( format == IMAGE_RGBA8 )
+		// gpuOverlayText<uchar4><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, color_scaled); 
+		gpuOverlayText<uchar4><<<grid, block,0,stream>>>(font,font_in, fontMapWidth, commands,commands_in, (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, color_scaled); 
+	// else if( format == IMAGE_RGB32F )
+	// 	gpuOverlayText<float3><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (float3*)input, (float3*)output, imgWidth, imgHeight, color_scaled); 
+	// else if( format == IMAGE_RGBA32F )
+	// 	gpuOverlayText<float4><<<grid, block,0,stream>>>(font, fontMapWidth, commands, (float4*)input, (float4*)output, imgWidth, imgHeight, color_scaled); 
+	// else
+	// 	return cudaErrorInvalidValue;
 
 	return cudaGetLastError();
 }
@@ -475,8 +655,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 	if( !image || width == 0 || height == 0 || numStrings == 0 )
 		return false;
 
-	if( format != IMAGE_RGB8 && format != IMAGE_RGBA8 && format != IMAGE_RGB32F && format != IMAGE_RGBA32F && format != IMAGE_ABGR8 && format != IMAGE_YUYV )
-	{
+	if( format != IMAGE_RGB8 && format != IMAGE_RGBA8 && format != IMAGE_RGB32F && format != IMAGE_RGBA32F && format != IMAGE_ABGR8 && format != IMAGE_YUYV ) {
 		LogError(LOG_CUDA "cudaFont::OverlayText() -- unsupported image format (%s)\n", imageFormatToStr(format));
 		LogError(LOG_CUDA "                           supported formats are:\n");
 		LogError(LOG_CUDA "                              * rgb8\n");		
@@ -552,8 +731,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			mRectsCPU[mRectIndex] = make_float4(width, height, 0, 0);
 
 		// make a glyph command for each character
-		for( uint32_t n=0; n < numChars; n++ )
-		{
+		for( uint32_t n=0; n < numChars; n++ ) {
 			char c = strings[s].first[n];
 			
 			// make sure the character is in range
@@ -564,14 +742,25 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			
 			// fill the next command
 			GlyphCommand* cmd = ((GlyphCommand*)mCommandCPU) + mCmdIndex + numCommands;
-
+			GlyphCommand* cmd_in = ((GlyphCommand*)mCommandCPU_in) + mCmdIndex + numCommands;
+			// printf("mCmdIndex: %d\n",mCmdIndex);
+			// mCmdIndex is usally zero!!
+			
 			cmd->x = pos.x;
 			cmd->y = pos.y + mGlyphInfo[c].yOffset;
-			cmd->u = mGlyphInfo[c].x;
+			cmd->u = mGlyphInfo[c].x;// these are start point of char c in font
 			cmd->v = mGlyphInfo[c].y;
 
 			cmd->width  = mGlyphInfo[c].width;
 			cmd->height = mGlyphInfo[c].height;
+
+			cmd_in->x = pos.x;
+			cmd_in->y = pos.y + mGlyphInfo[c].yOffset;
+			cmd_in->u = mGlyphInfo_in[c].x;// these are start point of char c in font
+			cmd_in->v = mGlyphInfo_in[c].y;
+
+			cmd_in->width  = mGlyphInfo_in[c].width;
+			cmd_in->height = mGlyphInfo_in[c].height;
 		
 			// advance the text position
 			pos.x += mGlyphInfo[c].xAdvance;
@@ -584,8 +773,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 				maxGlyphSize.y = mGlyphInfo[c].height;
 
 			// expand the background rect
-			if( has_bg )
-			{
+			if( has_bg ) {
 				float4* rect = mRectsCPU + mRectIndex + numRects;
 
 				if( cmd->x < rect->x )
@@ -607,8 +795,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			numCommands++;
 		}
 
-		if( has_bg )
-		{
+		if( has_bg ) {
 			float4* rect = mRectsCPU + mRectIndex + numRects;
 
 			// apply padding
@@ -628,15 +815,17 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 	// draw background rects
 	if( has_bg && numRects > 0 )
 		CUDA(cudaRectFill(image, image, width, height, IMAGE_RGBA8, mRectsGPU + mRectIndex, numRects, bg_color));
-		// launchRectFill<uchar4>((uchar4*)image, (uchar4*)image, width, height, mRectsGPU + mRectIndex, numRects, bg_color); 
 
-	// draw text characters
-	CUDA(cudaOverlayText( mFontMapGPU, maxGlyphSize, mFontMapWidth,
-					((GlyphCommand*)mCommandGPU) + mCmdIndex, numCommands, 
+	// CUDA(cudaOverlayText( mFontMapGPU, maxGlyphSize, mFontMapWidth,
+	// 				((GlyphCommand*)mCommandGPU) + mCmdIndex, numCommands, 
+	// 				color,stream, image, image, format, width, height));
+
+	CUDA(cudaOverlayText( mFontMapGPU,mFontMapGPU_in, maxGlyphSize, mFontMapWidth,
+					((GlyphCommand*)mCommandGPU) + mCmdIndex, 
+					((GlyphCommand*)mCommandGPU_in) + mCmdIndex ,
+					numCommands, 
 					color,stream, image, image, format, width, height));
 
-	
-			
 	// advance the buffer indices
 	mCmdIndex += numCommands;
 	mRectIndex += numRects;
@@ -648,7 +837,7 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 // Overlay
 bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uint32_t height, 
 					   const char* str, int x, int y, 
-					   const float4& color,cudaStream_t stream, const float4& bg_color, int bg_padding )
+					   const float4& color, cudaStream_t stream, const float4& bg_color, int bg_padding )
 {
 	if( !str )
 		return NULL;
@@ -699,8 +888,7 @@ int4 cudaFont::TextExtents( const char* str, int x, int y )
 
 
 	// find the extents of the string
-	for( uint32_t n=0; n < numChars; n++ )
-	{
+	for( uint32_t n=0; n < numChars; n++ ) {
 		char c = str[n];
 		
 		// make sure the character is in range

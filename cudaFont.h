@@ -143,17 +143,26 @@ public:
 protected:
 	cudaFont();
 	bool init( const char* font, float size );
+	bool init_border( const char* font, float size );
 		
 	float mSize;
 		
 	uint8_t* mFontMapCPU;
 	uint8_t* mFontMapGPU;
+
+	uint8_t* mFontMapCPU_in;
+	uint8_t* mFontMapGPU_in;
 	
 	int mFontMapWidth;
 	int mFontMapHeight;
 	
 	void* mCommandCPU;
 	void* mCommandGPU;
+
+	void* mCommandCPU_in;
+	void* mCommandGPU_in;
+
+
 	int   mCmdIndex;
 
 	float4* mRectsCPU;
@@ -176,6 +185,8 @@ protected:
 		float xOffset;
 		float yOffset;
 	} mGlyphInfo[NumGlyphs];
+
+	GlyphInfo mGlyphInfo_in[NumGlyphs];
 };
 
 #endif
