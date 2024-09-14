@@ -22,12 +22,15 @@
 #include "cudaAlphaBlend.cuh"
 #include <vector>
 
+#include <fstream>
+#include <iostream>
+
 using namespace std;
 
-int main()
+int main(int argc, const char **argv)
 {
     static const uint32_t MaxCommands = 1024;
-	static const uint32_t FirstGlyph  = 32;
+	static const uint32_t FirstGlyph  = 32; // 32
 	static const uint32_t LastGlyph   = 255;
 	static const uint32_t NumGlyphs   = LastGlyph - FirstGlyph;
 
@@ -50,41 +53,140 @@ int main()
 	mFontMapHeight = 512;
 
     uint8_t* mFontMapCPU;
+    uint8_t* mFontMapCPU_out;
+
 	uint8_t* mFontMapGPU;
+    uint8_t* mFontMapGPU_out;
 
-    uint8_t* mFontMapCPU_BOLD;
-	uint8_t* mFontMapGPU_BOLD;
+    float font_size = 40.0f;
 
+    string filename;
 
-    float size = 40.0f;
+    // filename = string(argv[1]);
 
+    // filename = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf";
+    // filename = "/home/meysam/Downloads/malvery-font/MalveryfreeRegular-lg3G5.otf";
+    // filename = "/home/meysam/Downloads/Action-Man/Action_Man_Shaded.ttf";
+    // filename = "/home/meysam/Downloads/Action-Man/Action_Man.ttf";
+    // filename = "/home/meysam/Downloads/NerdFontsSymbolsOnly/SymbolsNerdFont-Regular.ttf"; 
 
-    string filename = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
+    // filename = "/home/meysam/Downloads/playtime-with-hot-toddies/playtime.ttf";
+    filename = "/home/meysam/Downloads/Action-Man/Action_Man.ttf";
+    // filename = "/home/meysam/Downloads/steelfish/steelfish_rg.otf";
+
     const size_t ttf_size = fileSize(filename);
-
     void* ttf_buffer = malloc(ttf_size);
     FILE* ttf_file = fopen(filename.c_str(), "rb");
-
     const size_t ttf_read = fread(ttf_buffer, 1, ttf_size, ttf_file);
-
 	fclose(ttf_file);
     stbtt_bakedchar bakeCoords[NumGlyphs];
-
     const size_t fontMapSize = mFontMapWidth * mFontMapHeight * sizeof(unsigned char);
-
     cudaAllocMapped((void**)&mFontMapCPU, (void**)&mFontMapGPU, fontMapSize);
-
-    const int result = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer, 0, size, 
+    const int result = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer, 0, font_size, 
 										mFontMapCPU, mFontMapWidth, mFontMapHeight,
 									    FirstGlyph, NumGlyphs, bakeCoords);
+    
 
-    cv::Mat im(mFontMapHeight, mFontMapWidth, CV_8UC1,mFontMapCPU);
-    cv::Mat img_bgr;
-    cv::cvtColor( im, img_bgr, cv::COLOR_GRAY2BGR); 
 
-    cv::imshow( "img_bgr", img_bgr );
+    // filename = "/home/meysam/Downloads/playtime-with-hot-toddies/PlaytimeWithHotToddies3D.ttf";
+    filename = "/home/meysam/Downloads/Action-Man/Action_Man_Shaded.ttf";
+    // filename = "/home/meysam/Downloads/steelfish/steelfish_outline.otf";
+    const size_t ttf_size_out = fileSize(filename);
+    void* ttf_buffer_out = malloc(ttf_size_out);
+    FILE* ttf_file_out = fopen(filename.c_str(), "rb");
+    const size_t ttf_read_out = fread(ttf_buffer_out, 1, ttf_size_out, ttf_file_out);
+	fclose(ttf_file_out);
+    stbtt_bakedchar bakeCoords_out[NumGlyphs];
 
+    cudaAllocMapped((void**)&mFontMapCPU_out, (void**)&mFontMapGPU_out, fontMapSize);
+    const int result_out = stbtt_BakeFontBitmap((uint8_t*)ttf_buffer_out, 0, font_size, 
+										mFontMapCPU_out, mFontMapWidth, mFontMapHeight,
+									    FirstGlyph, NumGlyphs, bakeCoords_out);
+
+
+    
+
+// STBTT_DEF unsigned char * stbtt_GetGlyphSDF(const stbtt_fontinfo *info, float scale, int glyph, int padding, unsigned char onedge_value, float pixel_dist_scale, int *width, int *height, int *xoff, int *yoff);
+// STBTT_DEF unsigned char * stbtt_GetCodepointSDF(const stbtt_fontinfo *info, float scale, int codepoint, int padding, unsigned char onedge_value, float pixel_dist_scale, int *width, int *height, int *xoff, int *yoff);
+
+    for( uint32_t n=0; n < NumGlyphs; n++ ) {
+		mGlyphInfo[n].x = bakeCoords[n].x0;
+		mGlyphInfo[n].y = bakeCoords[n].y0;
+
+		mGlyphInfo[n].width  = bakeCoords[n].x1 - bakeCoords[n].x0;
+		mGlyphInfo[n].height = bakeCoords[n].y1 - bakeCoords[n].y0;
+
+		mGlyphInfo[n].xAdvance = bakeCoords[n].xadvance;
+		mGlyphInfo[n].xOffset  = bakeCoords[n].xoff;
+		mGlyphInfo[n].yOffset  = bakeCoords[n].yoff;
+
+    }
+
+    cv::Mat im(mFontMapHeight, mFontMapWidth, CV_8UC1, mFontMapCPU);
+    cv::resize(im, im, cv::Size(mFontMapWidth*2,mFontMapHeight*2) );
+    cv::imshow( "font", im );
+    
+    cv::Mat im_out(mFontMapHeight, mFontMapWidth, CV_8UC1, mFontMapCPU_out);
+    cv::resize(im_out, im_out, cv::Size(mFontMapWidth*2,mFontMapHeight*2) );
+    cv::imshow( "font_out", im_out );
+
+
+
+
+
+
+
+        // int lowThreshold = 0.4;
+    // const int max_lowThreshold = 100;
+    // const int ratio = 3;
+    // const int kernel_size = 3;
+    // cv::Mat zero_im = cv::Mat::zeros(cv::Size(mFontMapWidth, mFontMapHeight),CV_8UC1);
+    // cv::Mat detected_edges;
+    // // cv::GaussianBlur(im, im, cv::Size(3,3), 0);
+    // cv::Canny( im, detected_edges, 0.2,0.8, kernel_size );
+    // // cv::Sobel(im, detected_edges, CV_8UC1, 1, 1, 3);
+    // cout<<detected_edges.size()<<endl;
+    // vector<cv::Mat> chs;
+    // chs.push_back(zero_im);
+    // chs.push_back(zero_im);
+    // chs.push_back(detected_edges);
+    // cv::Mat merged_im ;
+    // cv::merge(chs,merged_im);
+
+    // cv::Mat img_bgr;
+    // cv::cvtColor( merged_im, img_bgr, cv::COLOR_GRAY2BGR); 
+    // cv::resize(merged_im,merged_im, cv::Size(mFontMapWidth*4, mFontMapHeight*4) );
+    
+    // ofstream outfile;
+    // outfile.open("font_data.cpp");
+    // outfile << "#include \"cudaFont.h\" "<<endl;
+    // outfile<<endl;
+    // outfile << "unsigned char font_data[512*512] = {" << endl;
+
+    // for(int i=0;i <mFontMapWidth*mFontMapHeight; i++)
+    //     outfile<<int(mFontMapCPU[i])<<", "<<endl;
+
+    // outfile << "};" << endl;
+    // outfile<<endl;
+    // outfile.close();
+
+    // unsigned char font_border_data[mFontMapWidth*mFontMapHeight];
+    // memcpy(font_border_data, detected_edges.data, mFontMapWidth*mFontMapHeight);
+
+    // outfile.open("font_border_data.cpp");
+    // outfile << "#include \"cudaFont.h\" "<<endl;
+    // outfile<<endl;
+    // outfile << "unsigned char font_border_data[512*512] = {" << endl;
+
+    // for(int i=0;i <mFontMapWidth*mFontMapHeight; i++)
+    //     outfile<<int(font_border_data[i])<<", "<<endl;
+
+    // outfile << "};" << endl;
+    // outfile<<endl;
+    // outfile.close();
     cv::waitKey(0);
+
+
 
     // string filename_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf";
     // const size_t ttf_size_BOLD = fileSize(filename_BOLD);
@@ -231,7 +333,7 @@ int main()
     
     // cv::imshow( "merged_im", merged_im );
 
-    cv::waitKey(0);
+    // cv::waitKey(0);
 
 
 

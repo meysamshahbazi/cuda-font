@@ -1,2 +1,8 @@
 .vscode/
 build/*
+bms/*
+.ipynb_checkpoints/*
+*.ppm
+*.png
+
+
