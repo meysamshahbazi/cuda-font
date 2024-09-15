@@ -83,50 +83,41 @@ public:
 				   uint32_t width, uint32_t height, 
 			        const char* str, int x, int y, 
 				   const float4& color=make_float4(0, 0, 0, 255),
-				   cudaStream_t stream=0, 
 				   const float4& background=make_float4(0, 0, 0, 0),
-				   int backgroundPadding=5
-				   );
+				   int backgroundPadding=5 );
 
-	
 	/**
 	 * Render text overlay onto image
 	 */
 	bool OverlayText( void* image, imageFormat format, 
-				   	uint32_t width, uint32_t height, 
+				   uint32_t width, uint32_t height, 
 			        const std::vector< std::pair< std::string, int2 > >& text,
 			        const float4& color=make_float4(0, 0, 0, 255),
-					cudaStream_t stream=0, 
-				   	const float4& background=make_float4(0, 0, 0, 0),
-				   	int backgroundPadding=5 );
+				   const float4& background=make_float4(0, 0, 0, 0),
+				   int backgroundPadding=5 );
 
 	/**
 	 * Render text overlay onto image
 	 */
-	template<typename T> bool OverlayText( 	T* image, uint32_t width, uint32_t height, 
-											const char* str, int x, int y, 
-											const float4& color=make_float4(0, 0, 0, 255),
-											cudaStream_t stream=0, 
-											const float4& background=make_float4(0, 0, 0, 0),
-											int backgroundPadding=5)		
+	template<typename T> bool OverlayText( T* image, uint32_t width, uint32_t height, 
+			        				    const char* str, int x, int y, 
+				   				    const float4& color=make_float4(0, 0, 0, 255),
+				   				    const float4& background=make_float4(0, 0, 0, 0),
+				   				    int backgroundPadding=5 )		
 	{ 
-		return OverlayText(image, imageFormatFromType<T>(), width, height, str, x, y, 
-			color,stream, background, backgroundPadding); 
+		return OverlayText(image, imageFormatFromType<T>(), width, height, str, x, y, color, background, backgroundPadding); 
 	}
-
-
+			
 	/**
 	 * Render text overlay onto image
 	 */
-	template<typename T> bool OverlayText( 	T* image, uint32_t width, uint32_t height, 
-											const std::vector< std::pair< std::string, int2 > >& text, 
-											const float4& color=make_float4(0, 0, 0, 255),
-											cudaStream_t stream=0,
-											const float4& background=make_float4(0, 0, 0, 0),
-											int backgroundPadding=5 )		
+	template<typename T> bool OverlayText( T* image, uint32_t width, uint32_t height, 
+			        				    const std::vector< std::pair< std::string, int2 > >& text, 
+				   				    const float4& color=make_float4(0, 0, 0, 255),
+				   				    const float4& background=make_float4(0, 0, 0, 0),
+				   				    int backgroundPadding=5 )		
 	{ 
-		return OverlayText(image, imageFormatFromType<T>(), width, height, text, 
-		color,stream, background, backgroundPadding, stream); 
+		return OverlayText(image, imageFormatFromType<T>(), width, height, text, color, background, backgroundPadding); 
 	}
 
 	/**
@@ -143,26 +134,17 @@ public:
 protected:
 	cudaFont();
 	bool init( const char* font, float size );
-	bool init_border( const char* font, float size );
 		
 	float mSize;
 		
 	uint8_t* mFontMapCPU;
 	uint8_t* mFontMapGPU;
-
-	uint8_t* mFontMapCPU_in;
-	uint8_t* mFontMapGPU_in;
 	
 	int mFontMapWidth;
 	int mFontMapHeight;
 	
 	void* mCommandCPU;
 	void* mCommandGPU;
-
-	void* mCommandCPU_in;
-	void* mCommandGPU_in;
-
-
 	int   mCmdIndex;
 
 	float4* mRectsCPU;
@@ -185,8 +167,6 @@ protected:
 		float xOffset;
 		float yOffset;
 	} mGlyphInfo[NumGlyphs];
-
-	GlyphInfo mGlyphInfo_in[NumGlyphs];
 };
 
 #endif

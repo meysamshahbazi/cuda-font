@@ -3,7 +3,6 @@
 
 #include <string>
 
-
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -26,9 +25,44 @@
 #include <iostream>
 
 using namespace std;
+using namespace cv;
+
+#include "cuproc.h"
+
+
+#include <opencv2/highgui.hpp>
+#include <iostream>
 
 int main(int argc, const char **argv)
 {
+
+    Mat frame;
+    // 000087.jpg
+    std::string video {"/media/meysam/hdd/dataset/Dataset_UAV123/UAV123/data_seq/UAV123/car1_s/%06d.jpg"};//= argv[1];
+    VideoCapture cap(video);
+
+    // get bounding box
+    cap >> frame;
+    cv::resize(frame , frame, cv::Size2i(1920, 1080));
+    CudaProcess cup(frame);
+    auto ptr_ = cup.getImgPtr();
+
+    auto font = cudaFont::Create(32.0f);
+
+    font->OverlayText((uchar4 *) ptr_, 1920, 1080,"Hello world!", 100, 100, make_float4(255, 0, 0 ,255) );
+    
+    
+    auto img = cup.backToImage();
+
+
+    cv::imshow( "img ", img );
+    cv::waitKey(0);
+
+    return -1;
+
+
+
+
     static const uint32_t MaxCommands = 1024;
 	static const uint32_t FirstGlyph  = 32; // 32
 	static const uint32_t LastGlyph   = 255;
@@ -45,6 +79,70 @@ int main(int argc, const char **argv)
 		float xOffset;
 		float yOffset;
 	} mGlyphInfo[NumGlyphs];
+
+
+    std::ifstream gtIfstream("../GlyphInfo.txt");
+    std::string gtLine;
+    for (int n = 0; n < NumGlyphs; n++) {
+        getline(gtIfstream, gtLine);
+        std::stringstream gtStream(gtLine);
+        std::string element;
+        std::vector<int> elements;
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].x = uint16_t(std::atof(element.c_str()));
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].y = uint16_t(std::atof(element.c_str()));  
+        
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].width = uint16_t(std::atof(element.c_str()));  
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].height = uint16_t(std::atof(element.c_str()));  
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].xAdvance = float(std::atof(element.c_str()));  
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].xOffset = float(std::atof(element.c_str()));
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].yOffset = float(std::atof(element.c_str()));
+
+        // std::cout << gtLine << std::endl;
+    }
+
+    gtIfstream.close();
+
+    std::cout << "n" << "\t" << "c" << "\t" 
+        << "x" << "\t" << "y" << "\t"
+        << "w" << "\t" << "h" << "\t"
+        << "xA" << "\t\t" << "xO" << "\t"
+        << "yO" << std::endl;
+
+    for( uint32_t n=0; n < NumGlyphs; n++ ) {
+        char temp_char = n + 32;
+        std::cout << n + 32 << "\t" << temp_char << "\t" 
+        << mGlyphInfo[n].x << "\t" << mGlyphInfo[n].y << "\t"
+        << mGlyphInfo[n].width << "\t" << mGlyphInfo[n].height << "\t"
+        << mGlyphInfo[n].xAdvance << "\t\t" << mGlyphInfo[n].xOffset << "\t"
+        << mGlyphInfo[n].yOffset << std::endl;
+    }
+
+
+
+
+    return -1;
+
+    // std::stringstream gtStream(gtLine);
+    // std::string element;
+    // std::vector<int> elements;
+
+    // while (std::getline(gtStream, element, ','))
+    // {
+    //     elements.push_back(cvRound(std::atof(element.c_str())));
+    // }
 
     GlyphInfo mGlyphInfo_BOLD[NumGlyphs];
     int mFontMapWidth;
@@ -68,11 +166,12 @@ int main(int argc, const char **argv)
     // filename = "/home/meysam/Downloads/malvery-font/MalveryfreeRegular-lg3G5.otf";
     // filename = "/home/meysam/Downloads/Action-Man/Action_Man_Shaded.ttf";
     // filename = "/home/meysam/Downloads/Action-Man/Action_Man.ttf";
-    // filename = "/home/meysam/Downloads/NerdFontsSymbolsOnly/SymbolsNerdFont-Regular.ttf"; 
-
+    // filename = "/home/meysam/Downloads/NerdFontsSymbolsOnly/SymbolsNerdFont-Regular.ttf";
     // filename = "/home/meysam/Downloads/playtime-with-hot-toddies/playtime.ttf";
-    filename = "/home/meysam/Downloads/Action-Man/Action_Man.ttf";
+    // filename = "/home/meysam/Downloads/Action-Man/Action_Man.ttf";
     // filename = "/home/meysam/Downloads/steelfish/steelfish_rg.otf";
+
+    filename = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
 
     const size_t ttf_size = fileSize(filename);
     void* ttf_buffer = malloc(ttf_size);
@@ -109,6 +208,13 @@ int main(int argc, const char **argv)
 // STBTT_DEF unsigned char * stbtt_GetGlyphSDF(const stbtt_fontinfo *info, float scale, int glyph, int padding, unsigned char onedge_value, float pixel_dist_scale, int *width, int *height, int *xoff, int *yoff);
 // STBTT_DEF unsigned char * stbtt_GetCodepointSDF(const stbtt_fontinfo *info, float scale, int codepoint, int padding, unsigned char onedge_value, float pixel_dist_scale, int *width, int *height, int *xoff, int *yoff);
 
+
+    std::cout << "n" << "\t" << "c" << "\t" 
+        << "x" << "\t" << "y" << "\t"
+        << "w" << "\t" << "h" << "\t"
+        << "xA" << "\t\t" << "xO" << "\t"
+        << "yO" << std::endl;
+
     for( uint32_t n=0; n < NumGlyphs; n++ ) {
 		mGlyphInfo[n].x = bakeCoords[n].x0;
 		mGlyphInfo[n].y = bakeCoords[n].y0;
@@ -120,15 +226,22 @@ int main(int argc, const char **argv)
 		mGlyphInfo[n].xOffset  = bakeCoords[n].xoff;
 		mGlyphInfo[n].yOffset  = bakeCoords[n].yoff;
 
+        char temp_char = n + 32;
+        std::cout << n + 32 << "\t" << temp_char << "\t" 
+        << mGlyphInfo[n].x << "\t" << mGlyphInfo[n].y << "\t"
+        << mGlyphInfo[n].width << "\t" << mGlyphInfo[n].height << "\t"
+        << mGlyphInfo[n].xAdvance << "\t\t" << mGlyphInfo[n].xOffset << "\t"
+        << mGlyphInfo[n].yOffset << std::endl;
     }
 
     cv::Mat im(mFontMapHeight, mFontMapWidth, CV_8UC1, mFontMapCPU);
     cv::resize(im, im, cv::Size(mFontMapWidth*2,mFontMapHeight*2) );
     cv::imshow( "font", im );
-    
-    cv::Mat im_out(mFontMapHeight, mFontMapWidth, CV_8UC1, mFontMapCPU_out);
-    cv::resize(im_out, im_out, cv::Size(mFontMapWidth*2,mFontMapHeight*2) );
-    cv::imshow( "font_out", im_out );
+    cv::waitKey(0);
+
+    // cv::Mat im_out(mFontMapHeight, mFontMapWidth, CV_8UC1, mFontMapCPU_out);
+    // cv::resize(im_out, im_out, cv::Size(mFontMapWidth*2,mFontMapHeight*2) );
+    // cv::imshow( "font_out", im_out );
 
 
 
@@ -184,7 +297,7 @@ int main(int argc, const char **argv)
     // outfile << "};" << endl;
     // outfile<<endl;
     // outfile.close();
-    cv::waitKey(0);
+    // cv::waitKey(0);
 
 
 

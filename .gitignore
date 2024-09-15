@@ -4,5 +4,6 @@ bms/*
 .ipynb_checkpoints/*
 *.ppm
 *.png
+GlyphInfo.txt
 
 
