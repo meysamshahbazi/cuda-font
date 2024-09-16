@@ -33,6 +33,10 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <sstream>
 
 //#define DEBUG_FONT
 
@@ -86,8 +90,8 @@ cudaFont::cudaFont()
 	mRectsGPU   = NULL;
 	mRectIndex  = 0;
 
-	mFontMapWidth  = 256;
-	mFontMapHeight = 256;
+	mFontMapWidth  = 512;
+	mFontMapHeight = 512;
 }
 
 
@@ -120,10 +124,14 @@ cudaFont::~cudaFont()
 	}
 }
 
+cudaFont* cudaFont::CreateWithBorder() {
+	cudaFont* c = new cudaFont();
+	c->init_border();
+	return c;
+}
 
 // Create
-cudaFont* cudaFont::Create( float size )
-{
+cudaFont* cudaFont::Create( float size ) {
 	// default fonts	
 	std::vector<std::string> fonts;
 	
@@ -135,12 +143,10 @@ cudaFont* cudaFont::Create( float size )
 
 
 // Create
-cudaFont* cudaFont::Create( const std::vector<std::string>& fonts, float size )
-{
+cudaFont* cudaFont::Create( const std::vector<std::string>& fonts, float size ) {
 	const uint32_t numFonts = fonts.size();
 
-	for( uint32_t n=0; n < numFonts; n++ )
-	{
+	for( uint32_t n=0; n < numFonts; n++ ) {
 		cudaFont* font = Create(fonts[n].c_str(), size);
 
 		if( font != NULL )
@@ -173,6 +179,82 @@ cudaFont* cudaFont::Create( const char* font, float size )
 	return c;
 }
 
+bool cudaFont::init_border() {
+
+    std::ifstream gtIfstream("../GlyphInfo.txt");
+    std::string gtLine;
+    for (int n = 0; n < NumGlyphs; n++) {
+        getline(gtIfstream, gtLine);
+        std::stringstream gtStream(gtLine);
+        std::string element;
+        std::vector<int> elements;
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].x = uint16_t(std::atof(element.c_str()));
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].y = uint16_t(std::atof(element.c_str()));  
+        
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].width = uint16_t(std::atof(element.c_str()));  
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].height = uint16_t(std::atof(element.c_str()));  
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].xAdvance = float(std::atof(element.c_str()));  
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].xOffset = float(std::atof(element.c_str()));
+
+        std::getline(gtStream, element, ',');
+        mGlyphInfo[n].yOffset = float(std::atof(element.c_str()));
+
+        // std::cout << gtLine << std::endl;
+    }
+
+    gtIfstream.close();
+
+	const size_t fontMapSize = mFontMapWidth * mFontMapHeight * sizeof(unsigned char);
+
+	if( !cudaAllocMapped((void**)&mFontMapCPU, (void**)&mFontMapGPU, fontMapSize) ) {
+			LogError(LOG_CUDA "failed to allocate %zu bytes to store %ix%i font map\n", fontMapSize, mFontMapWidth, mFontMapHeight);
+		// free(ttf_buffer_Bold);
+		return false;
+	}
+
+	if( !cudaAllocMapped((void**)&mFontMapCPU_border, (void**)&mFontMapGPU_border, fontMapSize) ) {
+		LogError(LOG_CUDA "failed to allocate %zu bytes to store %ix%i font map\n", fontMapSize, mFontMapWidth, mFontMapHeight);
+		return false;
+	}
+
+
+	// allocate memory for GPU command buffer	
+	if( !cudaAllocMapped(&mCommandCPU, &mCommandGPU, sizeof(GlyphCommand) * MaxCommands) )
+		return false;
+
+	// if( !cudaAllocMapped(&mCommandCPU_in, &mCommandGPU_in, sizeof(GlyphCommand) * MaxCommands) )
+	// 	return false;
+
+
+
+	// CUDA(cudaMemcpy(mFontMapGPU, font_data, fontMapSize, cudaMemcpyHostToDevice));
+    // CUDA(cudaMemcpy(mFontMapGPU_border, font_border_data, fontMapSize, cudaMemcpyHostToDevice));
+
+	std::ifstream fin("../fill_list.bin", std::ios::binary);
+    uchar fill_list[fontMapSize];
+    fin.read((char*)fill_list, fontMapSize);
+	CUDA(cudaMemcpy(mFontMapGPU, fill_list, fontMapSize, cudaMemcpyHostToDevice));
+	fin.close();
+
+	std::ifstream fin_b("../border_list.bin", std::ios::binary);
+    uchar border_list[fontMapSize];
+    fin_b.read((char*)border_list, fontMapSize);
+	CUDA(cudaMemcpy(mFontMapGPU_border, border_list, fontMapSize, cudaMemcpyHostToDevice));
+	fin_b.close();
+	
+	return true;
+}
 
 // init
 bool cudaFont::init( const char* filename, float size )
@@ -324,29 +406,26 @@ bool cudaFont::init( const char* filename, float size )
 }
 
 
-/*inline __host__ __device__ float4 operator*(float4 a, float4 b)
-{
-    return make_float4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w);
-}*/
 
 inline __host__ __device__ float4 alpha_blend( const float4& bg, const float4& fg )
 {
+	// TODO: do it with uchar stuff!
+	// px_in, px_font
 	const float alpha = fg.w / 255.0f;
 	const float ialph = 1.0f - alpha;
 	
-	return make_float4(alpha * fg.x + ialph * bg.x,
-				    alpha * fg.y + ialph * bg.y,
-				    alpha * fg.z + ialph * bg.z,
-				    bg.w);
+	return make_float4(	alpha * fg.x + ialph * bg.x,
+						alpha * fg.y + ialph * bg.y,
+						alpha * fg.z + ialph * bg.z,
+						alpha * fg.w + ialph * bg.w);
 } 
 
 
-template<typename T>
-__global__ void gpuOverlayText( unsigned char* font, int fontWidth, GlyphCommand* commands,
-						  T* input, T* output, int imgWidth, int imgHeight, float4 color ) 
+
+__global__ void gpuOverlayTextWithBorder(unsigned char* font, unsigned char* font_border,int fontWidth, GlyphCommand* commands,
+						  uchar4* input, uchar4* output, int imgWidth, int imgHeight, uchar4 color, uchar4 color_border) 
 {
 	const GlyphCommand cmd = commands[blockIdx.x];
-
 	if( threadIdx.x >= cmd.width || threadIdx.y >= cmd.height )
 		return;
 
@@ -356,75 +435,94 @@ __global__ void gpuOverlayText( unsigned char* font, int fontWidth, GlyphCommand
 	if( x < 0 || y < 0 || x >= imgWidth || y >= imgHeight )
 		return;
 
-	const int u = cmd.u + threadIdx.x;
-	const int v = cmd.v + threadIdx.y;
+	const int u = cmd.u + threadIdx.x ;
+	const int v = cmd.v + threadIdx.y ;
 
-	const float px_glyph = font[v * fontWidth + u];
+	const uchar px_glyph = font[v * fontWidth + u];
+	const uchar px_glyph_border = font_border[v * fontWidth + u];
 
-	const float4 px_font = make_float4(px_glyph * color.x, px_glyph * color.y, px_glyph * color.z, px_glyph * color.w);
-	const float4 px_in   = cast_vec<float4>(input[y * imgWidth + x]);
+	if (px_glyph_border)
+		output[y * imgWidth + x] = color_border;
 
-	output[y * imgWidth + x] = cast_vec<T>(alpha_blend(px_in, px_font));	 
+	if(px_glyph)
+		output[y * imgWidth + x] = color;
+
 }
 
+__global__ void gpuOverlayText( unsigned char* font,int fontWidth, GlyphCommand* commands,
+						  uchar4* input, uchar4* output, int imgWidth, int imgHeight, uchar4 color) 
+{
+	const GlyphCommand cmd = commands[blockIdx.x];
+	if( threadIdx.x >= cmd.width || threadIdx.y >= cmd.height )
+		return;
+
+	const int x = cmd.x + threadIdx.x;
+	const int y = cmd.y + threadIdx.y;
+
+	if( x < 0 || y < 0 || x >= imgWidth || y >= imgHeight )
+		return;
+
+	const int u = cmd.u + threadIdx.x ;
+	const int v = cmd.v + threadIdx.y ;
+
+	const uchar px_glyph = font[v * fontWidth + u];
+	// const float4 px_in   = cast_vec<float4>(input[y * imgWidth + x]);
+
+	if(px_glyph)
+		output[y * imgWidth + x] = color;	
+}
 
 // cudaOverlayText
-cudaError_t cudaOverlayText( unsigned char* font, const int2& maxGlyphSize, size_t fontMapWidth,
-					    GlyphCommand* commands, size_t numCommands, const float4& fontColor, 
-					    void* input, void* output, imageFormat format, size_t imgWidth, size_t imgHeight)	
+cudaError_t cudaOverlayText(unsigned char* font, unsigned char* font_border, const int2& maxGlyphSize, size_t fontMapWidth,
+				GlyphCommand* commands, /* GlyphCommand* commands_in, */ size_t numCommands, const uchar4& fontColor,const uchar4& fontColor_out,
+				cudaStream_t stream, void* input, void* output, imageFormat format, size_t imgWidth, size_t imgHeight)	
 {
 	if( !font || !commands || !input || !output || numCommands == 0 || fontMapWidth == 0 || imgWidth == 0 || imgHeight == 0 )
 		return cudaErrorInvalidValue;
 
-	const float4 color_scaled = make_float4( fontColor.x / 255.0f, fontColor.y / 255.0f, fontColor.z / 255.0f, fontColor.w / 255.0f );
-	
-	// setup arguments
 	const dim3 block(maxGlyphSize.x, maxGlyphSize.y);
 	const dim3 grid(numCommands);
+	
+	// the kernel that do all stuff in same
+	// gpuOverlayText2<<<grid, block,0,stream>>>(font, font_in, fontMapWidth, commands, commands_in,
+	// (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, fontColor, fontColor_out); 
 
-	if( format == IMAGE_RGB8 )
-		gpuOverlayText<uchar3><<<grid, block>>>(font, fontMapWidth, commands, (uchar3*)input, (uchar3*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGBA8 )
-		gpuOverlayText<uchar4><<<grid, block>>>(font, fontMapWidth, commands, (uchar4*)input, (uchar4*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGB32F )
-		gpuOverlayText<float3><<<grid, block>>>(font, fontMapWidth, commands, (float3*)input, (float3*)output, imgWidth, imgHeight, color_scaled); 
-	else if( format == IMAGE_RGBA32F )
-		gpuOverlayText<float4><<<grid, block>>>(font, fontMapWidth, commands, (float4*)input, (float4*)output, imgWidth, imgHeight, color_scaled); 
-	else
-		return cudaErrorInvalidValue;
+	/*
+	gpuOverlayTextWithBorder(unsigned char* font, unsigned char* font_border,int fontWidth, GlyphCommand* commands,
+						  uchar4* input, uchar4* output, int imgWidth, int imgHeight, uchar4 color, uchar4 color_border) 
+						  */
+	gpuOverlayTextWithBorder<<<grid, block,0,stream>>>(font,font_border, fontMapWidth, commands,
+		(uchar4*)input, (uchar4*)output, imgWidth, imgHeight, fontColor,fontColor_out);
+
+	// if (fontColor_out.w > 0)
+	// 	gpuOverlayText<<<grid, block,0,stream>>>(font, fontMapWidth, commands,
+	// 		(uchar4*)input, (uchar4*)output, imgWidth, imgHeight, fontColor_out); 
 
 	return cudaGetLastError();
 }
 
-
 // Overlay
 bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uint32_t height, 
-					   const std::vector< std::pair< std::string, int2 > >& strings, 
-					   const float4& color, const float4& bg_color, int bg_padding )
+							const std::vector< std::pair< std::string, int2 > >& strings, 
+							const uchar4& color, const uchar4& color_out,cudaStream_t stream)
 {
 	const uint32_t numStrings = strings.size();
 
 	if( !image || width == 0 || height == 0 || numStrings == 0 )
 		return false;
 
-	if( format != IMAGE_RGB8 && format != IMAGE_RGBA8 && format != IMAGE_RGB32F && format != IMAGE_RGBA32F )
-	{
+	// if( format != IMAGE_RGB8 && format != IMAGE_RGBA8 && format != IMAGE_RGB32F && format != IMAGE_RGBA32F && format != IMAGE_ABGR8 && format != IMAGE_YUYV ) {
+	if(  format != IMAGE_RGBA8 ) { // we just accept RGBA8!
 		LogError(LOG_CUDA "cudaFont::OverlayText() -- unsupported image format (%s)\n", imageFormatToStr(format));
 		LogError(LOG_CUDA "                           supported formats are:\n");
-		LogError(LOG_CUDA "                              * rgb8\n");		
 		LogError(LOG_CUDA "                              * rgba8\n");		
-		LogError(LOG_CUDA "                              * rgb32f\n");		
-		LogError(LOG_CUDA "                              * rgba32f\n");
 
 		return false;
 	}
 
-	
-	const bool has_bg = bg_color.w > 0.0f;
 	int2 maxGlyphSize = make_int2(0,0);
 
 	int numCommands = 0;
-	int numRects = 0;
 	int maxChars = 0;
 
 	// find the bg rects and total char count
@@ -434,9 +532,6 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 	// reset the buffer indices if we need the space
 	if( mCmdIndex + maxChars >= MaxCommands )
 		mCmdIndex = 0;
-
-	if( has_bg && mRectIndex + numStrings >= MaxCommands )
-		mRectIndex = 0;
 
 	// generate glyph commands and bg rects
 	for( uint32_t s=0; s < numStrings; s++ )
@@ -479,13 +574,8 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 		
 		pos.y += maxHeight;
 
-		// reset the background rect if needed
-		if( has_bg )
-			mRectsCPU[mRectIndex] = make_float4(width, height, 0, 0);
-
 		// make a glyph command for each character
-		for( uint32_t n=0; n < numChars; n++ )
-		{
+		for( uint32_t n=0; n < numChars; n++ ) {
 			char c = strings[s].first[n];
 			
 			// make sure the character is in range
@@ -496,14 +586,27 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 			
 			// fill the next command
 			GlyphCommand* cmd = ((GlyphCommand*)mCommandCPU) + mCmdIndex + numCommands;
+			// GlyphCommand* cmd_in = ((GlyphCommand*)mCommandCPU_in) + mCmdIndex + numCommands;
 
-			cmd->x = pos.x;
+			cmd->x = pos.x; // ORGINAL
+			// cmd->x = pos.x + mGlyphInfo[c].xOffset;
 			cmd->y = pos.y + mGlyphInfo[c].yOffset;
-			cmd->u = mGlyphInfo[c].x;
+			cmd->u = mGlyphInfo[c].x;// these are start point of char c in font
 			cmd->v = mGlyphInfo[c].y;
 
 			cmd->width  = mGlyphInfo[c].width;
 			cmd->height = mGlyphInfo[c].height;
+
+			// cmd_in->x = pos.x;
+			// cmd_in->x = pos.x + mGlyphInfo_in[c].xOffset;
+
+			// cmd_in->x = pos.x + (mGlyphInfo[c].width-mGlyphInfo_in[c].width)/2.0;
+			// cmd_in->y = pos.y + mGlyphInfo[c].yOffset + (mGlyphInfo[c].height-mGlyphInfo_in[c].height)/2.0;
+			// cmd_in->u = mGlyphInfo_in[c].x;// these are start point of char c in font
+			// cmd_in->v = mGlyphInfo_in[c].y;
+
+			// cmd_in->width  = mGlyphInfo_in[c].width;
+			// cmd_in->height = mGlyphInfo_in[c].height;
 		
 			// advance the text position
 			pos.x += mGlyphInfo[c].xAdvance;
@@ -514,70 +617,29 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 
 			if( maxGlyphSize.y < mGlyphInfo[c].height )
 				maxGlyphSize.y = mGlyphInfo[c].height;
-
-			// expand the background rect
-			if( has_bg )
-			{
-				float4* rect = mRectsCPU + mRectIndex + numRects;
-
-				if( cmd->x < rect->x )
-					rect->x = cmd->x;
-
-				if( cmd->y < rect->y )
-					rect->y = cmd->y;
-
-				const float x2 = cmd->x + cmd->width;
-				const float y2 = cmd->y + cmd->height;
-
-				if( x2 > rect->z )
-					rect->z = x2;
-
-				if( y2 > rect->w )
-					rect->w = y2;
-			}
-
 			numCommands++;
-		}
-
-		if( has_bg )
-		{
-			float4* rect = mRectsCPU + mRectIndex + numRects;
-
-			// apply padding
-			rect->x -= bg_padding;
-			rect->y -= bg_padding;
-			rect->z += bg_padding;
-			rect->w += bg_padding;
-
-			numRects++;
 		}
 	}
 
 #ifdef DEBUG_FONT
 	LogDebug(LOG_CUDA "max glyph size is %ix%i\n", maxGlyphSize.x, maxGlyphSize.y);
 #endif
+	CUDA(cudaOverlayText( mFontMapGPU, mFontMapGPU_border, maxGlyphSize, mFontMapWidth,
+					((GlyphCommand*)mCommandGPU) + mCmdIndex, 
+					// ((GlyphCommand*)mCommandGPU_in) + mCmdIndex ,
+					numCommands, 
+					color,color_out,stream, image, image, format, width, height));
 
-	// draw background rects
-	if( has_bg && numRects > 0 )
-		CUDA(cudaRectFill(image, image, width, height, format, mRectsGPU + mRectIndex, numRects, bg_color));
-
-	// draw text characters
-	CUDA(cudaOverlayText( mFontMapGPU, maxGlyphSize, mFontMapWidth,
-				       ((GlyphCommand*)mCommandGPU) + mCmdIndex, numCommands, 
-					  color, image, image, format, width, height));
-			
 	// advance the buffer indices
-	mCmdIndex += numCommands;
-	mRectIndex += numRects;
-		   
+	mCmdIndex += numCommands;		   
 	return true;
 }
 
 
 // Overlay
 bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uint32_t height, 
-					   const char* str, int x, int y, 
-					   const float4& color, const float4& bg_color, int bg_padding )
+					   		const char* str, int x, int y, 
+					   		const uchar4& color, const uchar4& color_out, cudaStream_t stream)
 {
 	if( !str )
 		return NULL;
@@ -586,8 +648,9 @@ bool cudaFont::OverlayText( void* image, imageFormat format, uint32_t width, uin
 	
 	list.push_back( std::pair< std::string, int2 >( str, make_int2(x,y) ));
 
-	return OverlayText(image, format, width, height, list, color, bg_color, bg_padding);
+	return OverlayText(image, format, width, height, list, color, color_out, stream);
 }
+
 
 
 // TextExtents
